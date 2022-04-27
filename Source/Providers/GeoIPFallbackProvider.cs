@@ -3,7 +3,7 @@ using System.Collections.Specialized;
 using System.Net;
 using System.Web.Hosting;
 using MaxMind.GeoIP;
-using Sitecore.Analytics.Model;
+using Sitecore.CES.GeoIp.Core.Model;
 using Sitecore.Configuration;
 
 namespace GeoIpFallback.Providers
