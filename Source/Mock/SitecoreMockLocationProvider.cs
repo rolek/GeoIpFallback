@@ -1,7 +1,9 @@
-﻿using System;
+﻿
+
+using System;
 using System.Collections.Specialized;
 using Sitecore.Analytics;
-using Sitecore.Analytics.Model;
+using Sitecore.CES.GeoIp.Core.Model;
 using Sitecore.Configuration;
 
 namespace GeoIpFallback.Mock
@@ -37,10 +39,7 @@ namespace GeoIpFallback.Mock
 
                 return DateTime.MinValue;
             }
-            set
-            {
-                Tracker.Current.Session.Interaction.CustomValues.Add(LastModifiedCustomValuesKey, value);
-            }
+            set => Tracker.Current.Session.Interaction.CustomValues.Add(LastModifiedCustomValuesKey, value);
         }
 
         private WhoIsInformation CurrentLocation

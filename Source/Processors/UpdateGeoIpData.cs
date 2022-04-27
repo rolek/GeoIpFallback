@@ -1,18 +1,31 @@
-﻿using System;
+﻿#region Usings
+
+using System;
 using System.Net;
 using GeoIpFallback.Mock;
 using GeoIpFallback.Providers;
+using Microsoft.Extensions.DependencyInjection;
 using Sitecore.Analytics;
-using Sitecore.Analytics.Lookups;
-using Sitecore.Analytics.Model;
 using Sitecore.Analytics.Pipelines.StartTracking;
+using Sitecore.CES.GeoIp.Core;
+using Sitecore.CES.GeoIp.Core.IpHashing;
+using Sitecore.CES.GeoIp.Core.Model;
 using Sitecore.Configuration;
+using Sitecore.DependencyInjection;
+using Sitecore.Diagnostics;
+
+#endregion
 
 namespace GeoIpFallback.Processors
 {
     public class UpdateGeoIpData : StartTrackingProcessor
     {
         private const string CustomValuesKey = "GeoIpFallback.Mocks.Enabled";
+        private IGeoIpManager _geoIpManager;
+
+        private IGeoIpManager GeoIpManager =>
+            _geoIpManager ?? (_geoIpManager = ServiceLocator.ServiceProvider.GetRequiredService<IGeoIpManager>());
+
 
         private bool IsMockEnabled
         {
@@ -33,66 +46,79 @@ namespace GeoIpFallback.Processors
 
         public override void Process(StartTrackingArgs args)
         {
-            Sitecore.Diagnostics.Assert.IsNotNull(Tracker.Current, "Tracker.Current is not initialized");
-            Sitecore.Diagnostics.Assert.IsNotNull(Tracker.Current.Session, "Tracker.Current.Session is not initialized");
+            Assert.IsNotNull(Tracker.Current, "Tracker.Current is not initialized");
+            Assert.IsNotNull(Tracker.Current.Session, "Tracker.Current.Session is not initialized");
 
             if (Tracker.Current.Session.Interaction == null)
+            {
                 return;
+            }
 
             if (IsMockEnabled)
             {
                 var mockWhoIsInformation = MockLocationFallbackManager.MockLocationFallbackProvider.GetMockCurrentLocation();
-                Tracker.Current.Session.Interaction.SetGeoData(mockWhoIsInformation);
+                Tracker.Current.Session.Interaction.SetWhoIsInformation(mockWhoIsInformation);
                 return;
             }
 
-            var ip = GeoIpManager.IpHashProvider.ResolveIpAddress(Tracker.Current.Session.Interaction.Ip);
+            var ip = GetIpAddress(Tracker.Current.Session.Interaction.Ip);
             var stringIp = ip.ToString();
 
-            if (Tracker.Current.Session.Interaction.CustomValues.ContainsKey(stringIp) && UpdateGeoIpDataOverrided(ip))
+            if (Tracker.Current.Session.Interaction.CustomValues.ContainsKey(stringIp) && UpdateGeoIpDataOverriden(ip))
             {
-                Sitecore.Diagnostics.Log.Debug("GeoIPFallback: the fallback version is overrided by data from Sitecore GEO IP service.", this);
+                Log.Debug("GeoIPFallback: the fallback version is overrided by data from Sitecore GEO IP service.", this);
                 Tracker.Current.Session.Interaction.CustomValues.Remove(stringIp);
                 return;
             }
 
-            if (!Tracker.Current.Session.Interaction.UpdateGeoIpData())
+            if (!Tracker.Current.Session.Interaction.HasGeoIpData)
             {
                 try
                 {
-                    Sitecore.Diagnostics.Log.Info("GeoIPFallback: Current location was not resolved by Sitecore GEO IP service; Local MaxMind database is requested. IP: " + stringIp, this);
+                    Log.Info(
+                        "GeoIPFallback: Current location was not resolved by Sitecore GEO IP service; Local MaxMind database is requested. IP: " +
+                        stringIp, this);
 
                     var whoIsInformation = LocationFallbackManager.LocationFallbackProvider.Resolve(ip);
 
-                    Tracker.Current.Session.Interaction.SetGeoData(whoIsInformation);
+                    Tracker.Current.Session.Interaction.SetWhoIsInformation(whoIsInformation);
                     Tracker.Current.Session.Interaction.CustomValues.Add(stringIp, whoIsInformation);
                 }
                 catch (Exception ex)
                 {
-                    Sitecore.Diagnostics.Log.Error("UpdateGeoIpData: Something was wrong.", this);
-                    Sitecore.Diagnostics.Log.Error("Exception:", ex, this);
+                    Log.Error("UpdateGeoIpData: Something was wrong.", this);
+                    Log.Error("Exception:", ex, this);
                 }
             }
         }
 
-        private bool UpdateGeoIpDataOverrided(IPAddress ip)
+        private bool UpdateGeoIpDataOverriden(IPAddress ip)
         {
-            return UpdateGeoIpDataOverrided(new TimeSpan(0, 0, 0, 0, 0), ip);
+            return UpdateGeoIpDataOverriden(new TimeSpan(0, 0, 0, 0, 0), ip);
         }
 
-        private bool UpdateGeoIpDataOverrided(TimeSpan timeout, IPAddress ip)
+        private bool UpdateGeoIpDataOverriden(TimeSpan timeout, IPAddress ip)
         {
-            GeoIpResult geoIpData = GeoIpManager.GetGeoIpData(new GeoIpOptions()
+            var geoIpData = GeoIpManager.GetGeoIpData(ip.ToString(), timeout == TimeSpan.MaxValue ? TimeSpan.Zero : timeout);
+
+            if (geoIpData.Status != GeoIpFetchDataStatus.Fetched || geoIpData.WhoIsInformation == null)
             {
-                Ip = ip,
-                Id = GeoIpManager.IpHashProvider.ComputeGuid(ip),
-                MillisecondsTimeout = timeout == TimeSpan.MaxValue ? -1 : (int)Math.Min(timeout.TotalMilliseconds, int.MaxValue)
-            });
-            if (geoIpData.ResolveState != GeoIpResolveState.Resolved || geoIpData.GeoIpData == null)
                 return false;
-            Tracker.Current.Session.Interaction.SetGeoData(geoIpData.GeoIpData);
+            }
+
+            Tracker.Current.Session.Interaction.SetWhoIsInformation(geoIpData.WhoIsInformation);
             Tracker.Current.Session.Interaction.UpdateLocationReference();
             return true;
+        }
+
+        private IPAddress GetIpAddress(byte[] ip)
+        {
+            if (ip == null)
+            {
+                ip = IpHashProviderBase.EmptyIpAddress;
+            }
+
+            return new IPAddress(ip);
         }
     }
 }
